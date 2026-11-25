@@ -1,0 +1,16 @@
+{
+  "batch": "R",
+  "areas": [
+    {"code": "甲", "name": "环线东段"},
+    {"code": "乙", "name": "环线西段"},
+    {"code": "丙", "name": "环线预留段"}
+  ],
+  "rows": [
+    {"number": 1, "area": "甲", "value": 7, "origin": "东段/A"},
+    {"number": 2, "area": "甲", "value": 11, "origin": "东段/B"},
+    {"number": 3, "area": "甲", "value": 11, "origin": "东段/C"},
+    {"number": 4, "area": "乙", "value": 5, "origin": "西段/D"}
+  ],
+  "initial_scope": ["甲"],
+  "target": "甲"
+}
