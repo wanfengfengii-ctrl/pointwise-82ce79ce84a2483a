@@ -48,3 +48,14 @@ def load_receipts(store: IntakeStore, ids):
         evidence = validate_evidence(decode_evidence(stored[receipt_id]))
         result.append(Receipt(receipt_id, evidence))
     return tuple(result)
+
+
+def accept_handoff(store: IntakeStore, source_id, payload, fingerprint):
+    # 延迟导入：交接域实现依赖归档读回对象，而归档签发又依赖本模块。
+    from intake.handoff import accept_handoff as _accept_handoff
+    return _accept_handoff(store, source_id, payload, fingerprint)
+
+
+def read_handoff(store: IntakeStore, handoff_id):
+    from intake.handoff import read_handoff as _read_handoff
+    return _read_handoff(store, handoff_id)

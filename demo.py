@@ -1,11 +1,12 @@
+import hashlib
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from archive.issue import close
-from archive.readback import read
+from archive.readback import export_handoff, read
 from archive.store import ArchiveStore
-from intake.receipts import receive
+from intake.receipts import accept_handoff, read_handoff, receive
 from intake.store import IntakeStore
 from portal.export import export
 from portal.recording import RecordingStore
@@ -73,13 +74,17 @@ def main():
         replay = close(archive, intake, revision.revision_id, target, selected[::-1] + selected[:1])
         if replay.issued != result.issued:
             raise RuntimeError('equivalent request did not return the first bundle and acknowledgment')
+
+        # 先验证归档库自身的离线读回（仅关门户，保留源收件库与归档库供交接导出）。
         source.path.unlink()
-        intake.path.unlink()
         reopened = ArchiveStore(archive.path)
         reopened.initialize()
         retrieved = read(reopened, bundle_id)
         if retrieved != result.issued or reopened.counts() != dict(bundles=1, acknowledgments=1, issued_requests=1):
             raise RuntimeError('offline readback did not return the committed issue')
+
+        # 再用仍可读的源收件库、源归档库导出离线交接交件，接班库接纳并在断源后按号读回。
+        _demonstrate_offline_handoff(root, intake, archive, bundle_id, result.issued)
 
         observation = {
             'case_id': 'V6',
@@ -101,6 +106,62 @@ def main():
             'oracle': '甲区声明三条。取冻结号 1、2、3，按两份正文的实际位置核对出处。整数手算 7+11+11=29。',
         }
         print('POINTWISE_SCENARIO ' + json.dumps(observation, ensure_ascii=False, separators=(',', ':')))
+
+
+def _demonstrate_offline_handoff(root, source_intake, source_archive, bundle_id, issued):
+    source_id = 'day-shift-center-A'
+    portal_path = root / 'source.sqlite'
+    # 源库导出原卷、首执及实际采用的原件，并以源发校验码固定交件。
+    payload, fingerprint_value = export_handoff(source_archive, source_intake, source_id, bundle_id)
+    receiver = IntakeStore(root / 'receiver.sqlite')
+    receiver.initialize()
+    handoff_id = accept_handoff(receiver, source_id, payload, fingerprint_value)
+    repeated_id = accept_handoff(receiver, source_id, payload, fingerprint_value)
+    if repeated_id != handoff_id:
+        raise RuntimeError('repeated handoff did not return the original handoff number')
+
+    # 停用门户、源收件库和源归档库后，重开接班库按号读回。
+    source_intake.path.unlink()
+    source_archive.path.unlink()
+    portal_offline = not portal_path.exists()
+    reopened = IntakeStore(receiver.path)
+    reopened.initialize()
+    handoff = read_handoff(reopened, handoff_id)
+    if handoff['issued'] != issued:
+        raise RuntimeError('offline handoff readback did not return the original bundle')
+    bundle = handoff['issued'].bundle
+    acknowledgment = handoff['issued'].acknowledgment
+    handoff_view = {
+        'case_id': 'HANDOFF',
+        'source_id': source_id,
+        'fingerprint': fingerprint_value,
+        'handoff_id': handoff_id,
+        'repeat_returns_same_id': repeated_id == handoff_id,
+        'source_offline': portal_offline and not source_intake.path.exists()
+                          and not source_archive.path.exists(),
+        'bundle': {
+            'source_bundle_id': bundle.bundle_id,
+            'revision_id': bundle.revision_id,
+            'target': bundle.target,
+            'ordered_numbers': [line.number for line in bundle.lines],
+            'field_origins': [line.origin for line in bundle.lines],
+            'download_origins': [[list(pair) for pair in line.occurrences] for line in bundle.lines],
+            'total': bundle.total,
+        },
+        'acknowledgment': {
+            'request': json.loads(acknowledgment.request_key),
+            'note': '首执照录整次请求；外版选件只留在原首执里，随件仅为实际采用的同版实收。',
+        },
+        'receipt_mapping': {
+            str(source_receipt_id): {
+                'local_receipt_id': local_receipt_id,
+                'bytes_sha256': hashlib.sha256(raw).hexdigest(),
+            }
+            for source_receipt_id, (local_receipt_id, raw) in sorted(handoff['receipts'].items())
+        },
+        'readback_matches_original': handoff['issued'] == issued,
+    }
+    print('POINTWISE_HANDOFF ' + json.dumps(handoff_view, ensure_ascii=False, separators=(',', ':')))
 
 
 if __name__ == '__main__':
